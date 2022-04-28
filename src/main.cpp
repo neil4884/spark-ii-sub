@@ -26,11 +26,6 @@
 #define P_SD_MISO 12
 #define P_SD_SCK 13
 
-#define P_WD_SCL 19
-#define P_WD_SDA 18
-#define P_WD_TX 17
-#define P_WD_RX 16
-
 #define P_RX_TEENSY_MAIN 1
 #define P_TX_TEENSY_MAIN 0
 
@@ -63,6 +58,9 @@ const float APOGEE_THRESHOLD = 0.95;
 const String PK_HEADER = "SPARK2,";
 const String F_NAME = "S2_SUB_";
 const String F_EXT = ".csv";
+
+// Define device id
+const u_int8_t device_id = 1;
 
 Adafruit_BNO055 bno055 = Adafruit_BNO055(-1, 0x28);
 Adafruit_ICM20948 icm;
@@ -123,7 +121,7 @@ void setup() {
     pinMode(P_X, INPUT);
     pinMode(P_Y, INPUT);
     pinMode(P_Z, INPUT);
-    pinMode(LED_BUILTIN, INPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
 
     // SERIAL
     Serial.begin(SERIAL_BAUD);
@@ -175,6 +173,10 @@ void setup() {
 void loop() {
     if (Serial.available() > 0) {
         String user_inp = Serial.readString();
+        if (user_inp == "SYS_CMD_REQUEST_DEVICE_ID") {
+            Serial.print("SYS_RESPOND_DEVICE_ID_");
+            Serial.println(device_id);
+        }
         if (os_state == 0) {
             if (user_inp == "READ_SD") {
                 Serial.println("Beginning SD Card Read Mode...");
@@ -200,6 +202,7 @@ void loop() {
             }
         }
     }
+
     // operational mode
     if (os_state == 0) {
         digitalWrite(LED_BUILTIN, HIGH);
