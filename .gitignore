@@ -1,0 +1,4 @@
+.pio
+
+# Project exclude paths
+/cmake-build-teensy40/
