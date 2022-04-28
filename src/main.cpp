@@ -1,7 +1,7 @@
 // SMART TIMER CIRCUIT BOARD SOFTWARE V2
 // Vivatsathorn Thitasirivit
 // SPARK-II (Software version 0.0.1)
-// SUB CONTROLLER
+// SUB CONTROLLER (dev_id = 1)
 
 // Imports
 #include <Arduino.h>
@@ -9,7 +9,6 @@
 #include <SD.h>
 #include <Wire.h>
 #include "Adafruit_Sensor.h"
-#include "Adafruit_BMP3XX.h"
 #include "Adafruit_BNO055.h"
 #include "Adafruit_ICM20948.h"
 #include "utility/imumaths.h"
@@ -35,7 +34,7 @@
 #define P_RX_TEENSY_MAIN 1
 #define P_TX_TEENSY_MAIN 0
 
-// Objects, constants, variables
+// Global objects, constants, variables
 const float SEALEVELPRESSURE_HPA = 1013.25;
 const float M_G = 9.81;
 
@@ -43,16 +42,10 @@ const float M_G = 9.81;
 // RATE_IMU Default: 10
 const u_int16_t RATE_IMU = 10;
 
-// RATE_GPS Default: 1000
-const u_int16_t RATE_GPS = 1000;
-
-// RATE_SENSOR Default: 500
-const u_int16_t RATE_SENSOR = 500;
-
 // RATE_DATALOG Default: 100
 const u_int16_t RATE_DATALOG = 100;
 
-// RATE_DATACOM Default: 1000
+// RATE_DATACOM Default: 500
 const u_int16_t RATE_DATACOM = 500;
 
 // FIRE_HOLD Default: 2000
@@ -71,12 +64,15 @@ const String PK_HEADER = "SPARK2,";
 const String F_NAME = "S2_SUB_";
 const String F_EXT = ".csv";
 
-Adafruit_BMP3XX bmp388;
 Adafruit_BNO055 bno055 = Adafruit_BNO055(-1, 0x28);
 Adafruit_ICM20948 icm;
 
-// os_state: 0 is default operation, 1 is wait for sd read, 2 is sd read, 255 is end - restart to reset
+// os_state: 0 is default operation, 1 is wait for sd read, 2 is wait for user input
+// 3 is sd read, 255 is end - restart to reset
 u_int8_t os_state = 0;
+u_int8_t trigger_launch = 0;
+u_int8_t trigger_deployment_1 = 0;
+u_int8_t trigger_deployment_2 = 0;
 u_int32_t t_capture;
 u_int32_t dt;
 u_int32_t counter = 0;
@@ -103,6 +99,7 @@ float vel_X3 = 0, vel_Y3 = 0, vel_Z3 = 0;
 float pos_X3 = 0, pos_Y3 = 0, pos_Z3 = 0;
 
 char file_name[100];
+char read_name[100];
 
 String p_log1 = "";
 String p_log2 = "";
@@ -110,16 +107,16 @@ String p_log3 = "";
 String p_log4 = "";
 String p_com = "";
 
+File root;
 File sd_file;
+File read_file;
 
 // Functions
 float mapf(float x, float in_min, float in_max, float out_min, float out_max);
-
 float accl(int raw_K);
-
 float integrate(float inp_f, u_int32_t inp_dt);
-
 String comma(const String &inp);
+void printDirectory(File dir, uint8_t num_tabs);
 
 void setup() {
     // PIN
@@ -145,11 +142,12 @@ void setup() {
     // SD
     SD.begin(P_SD_CS);
     int sd_file_idx = 0;
-    do {
+    while (true) {
         String file_name_str = (F_NAME + String(sd_file_idx) + F_EXT);
         file_name_str.toCharArray(file_name, 100);
         sd_file_idx++;
-    } while (SD.exists(file_name));
+        if (!SD.exists(file_name)) break;
+    }
 
     // BMP388
 //    bmp388.begin_I2C();
@@ -177,11 +175,30 @@ void setup() {
 void loop() {
     if (Serial.available() > 0) {
         String user_inp = Serial.readString();
-        Serial.println("User input: " + user_inp);
-        if (user_inp == "READ_SD") {
-            Serial.println("Beginning SD Card Read Mode...");
+        if (os_state == 0) {
+            if (user_inp == "READ_SD") {
+                Serial.println("Beginning SD Card Read Mode...");
+                os_state = 1;
+            }
+            if (user_inp == "END_OP") {
+                os_state = 255;
+            }
         }
-        os_state = 1;
+        else if (os_state == 2 and user_inp != "START_OP") {
+            if (user_inp == "END_READ") {
+                os_state = 255;
+            }
+            else {
+                user_inp.toCharArray(read_name, 100);
+                read_file = SD.open(read_name, FILE_READ);
+                os_state = 3;
+            }
+        }
+        if (os_state != 0) {
+            if (user_inp == "START_OP") {
+                os_state = 0;
+            }
+        }
     }
     // operational mode
     if (os_state == 0) {
@@ -316,7 +333,7 @@ void loop() {
                 sd_file.print(p_log1);
                 sd_file.print(p_log2);
                 sd_file.print(p_log3);
-                sd_file.print(p_log4);
+                sd_file.println(p_log4);
                 sd_file.close();
             }
 
@@ -328,8 +345,24 @@ void loop() {
 
     // sd read wait mode
     else if (os_state == 1) {
-        Serial.println("This is SD state");
-        delay(2000);
+        root = SD.open("/");
+        Serial.println(F("-------------"));
+        printDirectory(root, 0);
+        Serial.println(F("-------------"));
+        os_state = 2;
+    }
+
+    // sd read inp
+    else if (os_state == 3) {
+        if (read_file) {
+            while (read_file.available()) {
+                char inp_c_file = read_file.read();
+                Serial.print(inp_c_file);
+            }
+            Serial.println();
+            read_file.close();
+        }
+        os_state = 2;
     }
 }
 
@@ -349,4 +382,25 @@ float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
 
 float integrate(float inp_f, u_int32_t inp_dt) {
     return inp_f * (float) inp_dt / 1000;
+}
+
+void printDirectory(File dir, uint8_t num_tabs) {
+    File entry;
+    while (true) {
+        entry = dir.openNextFile();
+        if (!entry) break;
+        for (uint8_t i = 0; i < num_tabs; i++) {
+            Serial.print("\t");
+        }
+        Serial.print(entry.name());
+        if (entry.isDirectory()) {
+            Serial.println("/");
+            printDirectory(entry, num_tabs + 1);
+        }
+        else {
+            Serial.print("\t\t");
+            Serial.println(entry.size(), DEC);
+        }
+        entry.close();
+    }
 }
