@@ -183,6 +183,8 @@ void loop() {
                     dfu_state = 4;
                 } else if (user_inp == "WRITE_EEPROM") {
                     dfu_state = 6;
+                } else if (user_inp == "CLEAR_EEPROM") {
+                    dfu_state = 8;
                 } else if (user_inp == "EXIT_DFU") {
                     os_state = 0;
                     dfu_state = 0;
@@ -372,7 +374,6 @@ void loop() {
         if (dfu_state == 2) {
             Serial.print("SYS_RESPOND_DEVICE_ID_");
             Serial.println(device_id);
-            dfu_state = 0;
 
         } else if (dfu_state == 4) {
             while (Serial.available() <= 0);
@@ -382,7 +383,7 @@ void loop() {
                 int eeprom_read = EEPROM.read(arg_read_addr);
                 Serial.println(eeprom_read);
             }
-            dfu_state = 0;
+
         } else if (dfu_state == 6) {
             while (Serial.available() <= 0);
             user_inp = Serial.readString();
@@ -395,8 +396,14 @@ void loop() {
                     EEPROM.update(arg_write_addr, arg_write_val);
                 }
             }
-            dfu_state = 0;
+
+        } else if (dfu_state == 8) {
+            // TEENSY 4.0 CLEAR 0 to 1079
+            for (int idx_eepr_clear = 0; idx_eepr_clear < 1080; idx_eepr_clear++) {
+                EEPROM.update(idx_eepr_clear, 0);
+            }
         }
+        dfu_state = 0;
     }
 }
 
