@@ -5,6 +5,7 @@
 
 // Imports
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
@@ -68,6 +69,7 @@ Adafruit_ICM20948 icm;
 // os_state: 0 is default operation, 1 is wait for sd read, 2 is wait for user input
 // 3 is sd read, 255 is end - restart to reset
 u_int8_t os_state = 0;
+u_int8_t dfu_state = 0;
 u_int8_t trigger_launch = 0;
 u_int8_t trigger_deployment_1 = 0;
 u_int8_t trigger_deployment_2 = 0;
@@ -77,9 +79,6 @@ u_int32_t counter = 0;
 u_int32_t last_millis_imu = 0;
 u_int32_t last_millis_log = 0;
 u_int32_t last_millis_com = 0;
-
-//float gps_lat, gps_lon, gps_alt;
-//float bmp_temp, bmp_pres, bmp_alt, bmp_ref_alt;
 
 float dir_X1 = 0, dir_Y1 = 0, dir_Z1 = 0;
 float acc_X1 = 0, acc_Y1 = 0, acc_Z1 = 0;
@@ -99,6 +98,7 @@ float pos_X3 = 0, pos_Y3 = 0, pos_Z3 = 0;
 char file_name[100];
 char read_name[100];
 
+String user_inp;
 String p_log1 = "";
 String p_log2 = "";
 String p_log3 = "";
@@ -111,9 +111,13 @@ File read_file;
 
 // Functions
 float mapf(float x, float in_min, float in_max, float out_min, float out_max);
+
 float accl(int raw_K);
+
 float integrate(float inp_f, u_int32_t inp_dt);
+
 String comma(const String &inp);
+
 void printDirectory(File dir, uint8_t num_tabs);
 
 void setup() {
@@ -147,14 +151,6 @@ void setup() {
         if (!SD.exists(file_name)) break;
     }
 
-    // BMP388
-//    bmp388.begin_I2C();
-//    bmp388.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
-//    bmp388.setPressureOversampling(BMP3_OVERSAMPLING_4X);
-//    bmp388.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
-//    bmp388.setOutputDataRate(BMP3_ODR_50_HZ);
-//    bmp_ref_alt = bmp388.readAltitude(SEALEVELPRESSURE_HPA);
-
     // BNO055
     bno055.begin();
     bno055.setExtCrystalUse(true);
@@ -172,35 +168,38 @@ void setup() {
 
 void loop() {
     if (Serial.available() > 0) {
-        String user_inp = Serial.readString();
-        if (user_inp == "SYS_CMD_REQUEST_DEVICE_ID") {
-            Serial.print("SYS_RESPOND_DEVICE_ID_");
-            Serial.println(device_id);
-        }
-        if (os_state == 0) {
-            if (user_inp == "READ_SD") {
-                Serial.println("Beginning SD Card Read Mode...");
-                os_state = 1;
-            }
-            if (user_inp == "END_OP") {
-                os_state = 255;
-            }
-        }
-        else if (os_state == 2 and user_inp != "START_OP") {
+        user_inp = Serial.readString();
+        if (os_state == 2) {
             if (user_inp == "END_READ") {
                 os_state = 255;
-            }
-            else {
-                user_inp.toCharArray(read_name, 100);
-                read_file = SD.open(read_name, FILE_READ);
+            } else {
                 os_state = 3;
             }
-        }
-        if (os_state != 0) {
-            if (user_inp == "START_OP") {
-                os_state = 0;
+        } else if (os_state == 254) {
+            if (dfu_state != 0) {
+                if (user_inp == "SYS_CMD_REQUEST_DEVICE_ID") {
+                    dfu_state = 2;
+                } else if (user_inp == "READ_EEPROM") {
+                    dfu_state = 4;
+                } else if (user_inp == "WRITE_EEPROM") {
+                    dfu_state = 6;
+                } else if (user_inp == "EXIT_DFU") {
+                    os_state = 0;
+                    dfu_state = 0;
+                }
             }
+
+        } else if (user_inp == "START_OP") {
+            os_state = 0;
+        } else if (user_inp == "READ_SD") {
+            os_state = 1;
+        } else if (user_inp == "ENTER_DFU") {
+            os_state = 254;
+            dfu_state = 1;
+        } else if (user_inp == "END_OP") {
+            os_state = 255;
         }
+
     }
 
     // operational mode
@@ -346,7 +345,7 @@ void loop() {
         digitalWrite(LED_BUILTIN, LOW);
     }
 
-    // sd read wait mode
+        // sd read wait mode
     else if (os_state == 1) {
         root = SD.open("/");
         Serial.println(F("-------------"));
@@ -355,7 +354,7 @@ void loop() {
         os_state = 2;
     }
 
-    // sd read inp
+        // sd read inp
     else if (os_state == 3) {
         if (read_file) {
             while (read_file.available()) {
@@ -367,16 +366,48 @@ void loop() {
         }
         os_state = 2;
     }
+
+        // dfu
+    else if (os_state == 254) {
+        if (dfu_state == 2) {
+            Serial.print("SYS_RESPOND_DEVICE_ID_");
+            Serial.println(device_id);
+            dfu_state = 0;
+
+        } else if (dfu_state == 4) {
+            while (Serial.available() <= 0);
+            user_inp = Serial.readString();
+            if (user_inp.length() > 0) {
+                int arg_read_addr = user_inp.toInt();
+                int eeprom_read = EEPROM.read(arg_read_addr);
+                Serial.println(eeprom_read);
+            }
+            dfu_state = 0;
+        } else if (dfu_state == 6) {
+            while (Serial.available() <= 0);
+            user_inp = Serial.readString();
+            if (user_inp.length() > 0) {
+                int arg_write_addr = user_inp.toInt();
+                while (Serial.available() <= 0);
+                user_inp = Serial.readString();
+                if (user_inp.length() > 0) {
+                    int arg_write_val = user_inp.toInt();
+                    EEPROM.update(arg_write_addr, arg_write_val);
+                }
+            }
+            dfu_state = 0;
+        }
+    }
 }
 
 String comma(const String &inp) {
-    return inp + ",";
+    return (inp + ",");
 }
 
 float accl(int raw_K) {
     float scaled_K;
     scaled_K = mapf((float) raw_K, 0, 1023, -ACC_SCALE, ACC_SCALE);
-    return M_G * scaled_K;
+    return (M_G * scaled_K);
 }
 
 float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
@@ -399,8 +430,7 @@ void printDirectory(File dir, uint8_t num_tabs) {
         if (entry.isDirectory()) {
             Serial.println("/");
             printDirectory(entry, num_tabs + 1);
-        }
-        else {
+        } else {
             Serial.print("\t\t");
             Serial.println(entry.size(), DEC);
         }
