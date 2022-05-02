@@ -154,6 +154,7 @@ void setup() {
         sd_file_idx++;
         if (!SD.exists(file_name)) break;
     }
+    sd_file = SD.open(file_name, FILE_WRITE);
 
     // BNO055
     bno055.begin();
@@ -340,13 +341,15 @@ void loop() {
             Serial.println(p_log3);
             Serial.println(p_log4);
 
-            sd_file = SD.open(file_name, FILE_WRITE);
+            if (!sd_file) {
+                sd_file = SD.open(file_name, FILE_WRITE);
+            }
             if (sd_file) {
                 sd_file.print(p_log1);
                 sd_file.print(p_log2);
                 sd_file.print(p_log3);
                 sd_file.println(p_log4);
-                sd_file.close();
+                sd_file.flush();
             }
 
             counter++;
